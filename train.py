@@ -26,52 +26,27 @@ if __name__ == "__main__":
     #   mobilenet、xception 
     backbone    = sys_config.backbone
     model_path  = sys_config.model_path
-    #-------------------------------#
     #   下采样的倍数8、16 
     #   8要求更大的显存
-    #-------------------------------#
     downsample_factor   = 16
     input_shape         = [512, 512]
     Init_Epoch          = 0
     Freeze_Epoch        = 50
     Freeze_batch_size   = 8
     Freeze_lr           = 5e-4
-    #----------------------------------------------------#
-    #   解冻阶段训练参数
-    #   此时模型的主干不被冻结了，特征提取网络会发生改变
-    #   占用的显存较大，网络所有的参数都会发生改变
-    #----------------------------------------------------#
     UnFreeze_Epoch      = 100
     Unfreeze_batch_size = 4
     Unfreeze_lr         = 5e-5
 
     dataset_path  = sys_config.dataset_path
-    #--------------------------------------------------------------------#
-    #   建议选项：
-    #   种类少（几类）时，设置为True
-    #   种类多（十几类）时，如果batch_size比较大（10以上），那么设置为True
-    #   种类多（十几类）时，如果batch_size比较小（10以下），那么设置为False
-    #---------------------------------------------------------------------# 
     dice_loss       = False
-    #------------------------------------------------------#
-    #   是否进行冻结训练，默认先冻结主干训练后解冻训练。
-    #------------------------------------------------------#
     Freeze_Train    = True
-    #------------------------------------------------------#
-    #   用于设置是否使用多线程读取数据，0代表关闭多线程
-    #   开启后会加快数据读取速度，但是会占用更多内存
-    #   keras里开启多线程有些时候速度反而慢了许多
-    #   在IO为瓶颈的时候再开启多线程，即GPU运算速度远大于读取图片的速度。
-    #------------------------------------------------------#
     num_workers     = 0
 
 
     model = Deeplabv3([input_shape[0], input_shape[1], 3], num_classes, backbone = backbone, downsample_factor = downsample_factor)
 
     model.load_weights(model_path, by_name=True,skip_mismatch=True)
-    #---------------------------#
-    #   读取数据集对应的txt
-    #---------------------------#
     with open(os.path.join(dataset_path, "train.txt"),"r") as f:
         train_lines = f.readlines()
 
