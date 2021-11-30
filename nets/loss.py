@@ -1,5 +1,6 @@
 import tensorflow as tf
 from tensorflow.keras import backend as K
+from tensorflow.python.keras.backend import log
 
 
 def dice_loss_with_CE(beta=1, smooth = 1e-5):
@@ -29,3 +30,17 @@ def CE():
         # dice_loss = tf.Print(CE_loss, [CE_loss])
         return CE_loss
     return _CE
+
+# 添加focal loss
+def focal_loss(gamma=2, beta=0.5):
+    def focal_loss_fn(y_true, y_pred):
+        y_pred = K.clip(y_pred, K.epsilon(), 1.0 - K.epsilon())
+        pt = -y_true[..., :-1]*K.log(y_pred)
+        pt = K.sum(pt, axis=-1)
+        pt = tf.exp(pt)
+        if beta is not  None:
+            pt = pt*beta
+        focal_loss_value = -((1 - pt) ** gamma) * pt
+        focal_loss_value = K.mean(focal_loss_value)
+        return focal_loss_value
+    return focal_loss_fn
