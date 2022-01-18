@@ -23,8 +23,6 @@ def SepConv_BN(x, filters, prefix, stride=1, kernel_size=3, rate=1, depth_activa
         pad_end = pad_total - pad_beg
         x = ZeroPadding2D((pad_beg, pad_end))(x)
         depth_padding = 'valid'
-    
-    # 如果需要激活函数
     if not depth_activation:
         x = Activation('relu')(x)
 
@@ -56,12 +54,6 @@ def Deeplabv3(input_shape, num_classes, alpha=1., backbone="mobilenet", downsamp
         raise ValueError('Unsupported backbone - `{}`, Use mobilenet, xception.'.format(backbone))
 
     size_before = tf.keras.backend.int_shape(x)
-
-    #-----------------------------------------#
-    #   一共五个分支
-    #   ASPP特征提取模块
-    #   利用不同膨胀率的膨胀卷积进行特征提取
-    #-----------------------------------------#
     # 分支0
     b0 = Conv2D(256, (1, 1), padding='same', use_bias=False, name='aspp0')(x)
     b0 = BatchNormalization(name='aspp0_BN', epsilon=1e-5)(b0)
@@ -77,20 +69,14 @@ def Deeplabv3(input_shape, num_classes, alpha=1., backbone="mobilenet", downsamp
     b3 = SepConv_BN(x, 256, 'aspp3',
                     rate=atrous_rates[2], depth_activation=True, epsilon=1e-5)
                     
-    # 分支4 全部求平均后，再利用expand_dims扩充维度，之后利用1x1卷积调整通道
+    # 分支4 平均池化
     b4 = GlobalAveragePooling2D()(x)
     b4 = Lambda(lambda x: K.expand_dims(x, 1))(b4)
     b4 = Lambda(lambda x: K.expand_dims(x, 1))(b4)
     b4 = Conv2D(256, (1, 1), padding='same', use_bias=False, name='image_pooling')(b4)
     b4 = BatchNormalization(name='image_pooling_BN', epsilon=1e-5)(b4)
     b4 = Activation('relu')(b4)
-    # 直接利用resize_images扩充hw
     b4 = Lambda(lambda x: tf.compat.v1.image.resize_images(x, size_before[1:3], align_corners=True))(b4)
-
-    #-----------------------------------------#
-    #   将五个分支的内容堆叠起来
-    #   然后1x1卷积整合特征。
-    #-----------------------------------------#
     x = Concatenate()([b4, b0, b1, b2, b3])
     # 利用conv2d压缩 32,32,256
     x = Conv2D(256, (1, 1), padding='same', use_bias=False, name='concat_projection')(x)
@@ -99,29 +85,15 @@ def Deeplabv3(input_shape, num_classes, alpha=1., backbone="mobilenet", downsamp
     x = Dropout(0.1)(x)
 
     skip_size = tf.keras.backend.int_shape(skip1)
-    #-----------------------------------------#
-    #   将加强特征边上采样
-    #-----------------------------------------#
     x = Lambda(lambda xx: tf.compat.v1.image.resize_images(xx, skip_size[1:3], align_corners=True))(x)
-    #----------------------------------#
-    #   浅层特征边
-    #----------------------------------#
     dec_skip1 = Conv2D(48, (1, 1), padding='same',use_bias=False, name='feature_projection0')(skip1)
     dec_skip1 = BatchNormalization(name='feature_projection0_BN', epsilon=1e-5)(dec_skip1)
     dec_skip1 = Activation(tf.nn.relu)(dec_skip1)
-
-    #-----------------------------------------#
-    #   与浅层特征堆叠后利用卷积进行特征提取
-    #-----------------------------------------#
     x = Concatenate()([x, dec_skip1])
     x = SepConv_BN(x, 256, 'decoder_conv0',
                     depth_activation=True, epsilon=1e-5)
     x = SepConv_BN(x, 256, 'decoder_conv1',
                     depth_activation=True, epsilon=1e-5)
-
-    #-----------------------------------------#
-    #   获得每个像素点的分类
-    #-----------------------------------------#
     # 512,512
     size_before3 = tf.keras.backend.int_shape(img_input)
     # 512,512,21
