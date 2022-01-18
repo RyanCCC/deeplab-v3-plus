@@ -87,8 +87,8 @@ if __name__ == "__main__":
 
         print('Train on {} samples, val on {} samples, with batch size {}.'.format(len(train_lines), len(val_lines), batch_size))
         if eager:
-            gen     = tf.data.Dataset.from_generator(partial(train_dataloader.generate), (tf.float32, tf.float32))
-            gen_val = tf.data.Dataset.from_generator(partial(val_dataloader.generate), (tf.float32, tf.float32))
+            gen     = tf.data.Dataset.from_generator(partial(train_dataloader()), (tf.float32, tf.float32))
+            gen_val = tf.data.Dataset.from_generator(partial(val_dataloader()), (tf.float32, tf.float32))
 
             gen     = gen.shuffle(buffer_size = batch_size).prefetch(buffer_size = batch_size)
             gen_val = gen_val.shuffle(buffer_size = batch_size).prefetch(buffer_size = batch_size)

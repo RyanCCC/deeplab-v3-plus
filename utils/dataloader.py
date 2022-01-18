@@ -29,36 +29,27 @@ class DeeplabDataset(keras.utils.Sequence):
         images  = []
         targets = []
         for i in range(index * self.batch_size, (index + 1) * self.batch_size):  
-            i           = i % self.length
-            name        = self.annotation_lines[i].split()[0]
-            #-------------------------------#
-            #   从文件中读取图像
-            #-------------------------------#
-            jpg         = Image.open(os.path.join(os.path.join(self.dataset_path, self.JPEGImages_path), name + ".png"))
-            png         = Image.open(os.path.join(os.path.join(self.dataset_path, self.Labels_path), name + ".png"))
-            #-------------------------------#
-            #   数据增强
-            #-------------------------------#
-            jpg, png    = self.get_random_data(jpg, png, self.input_shape, random = self.train)
-            jpg         = preprocess_input(np.array(jpg, np.float64))
-            png         = np.array(png)
+            i = i % self.length
+            name = self.annotation_lines[i].split()[0]
+            jpg = Image.open(os.path.join(os.path.join(self.dataset_path, self.JPEGImages_path), name + ".png"))
+            png = Image.open(os.path.join(os.path.join(self.dataset_path, self.Labels_path), name + ".png"))
+            # 数据增强
+            jpg, png = self.get_random_data(jpg, png, self.input_shape, random = self.train)
+            jpg = preprocess_input(np.array(jpg, np.float64))
+            png = np.array(png)
             png[png >= self.num_classes] = self.num_classes
-            #-------------------------------------------------------#
-            #   转化成one_hot的形式
-            #   在这里需要+1是因为voc数据集有些标签具有白边部分
-            #   我们需要将白边部分进行忽略，+1的目的是方便忽略。
-            #-------------------------------------------------------#
-            seg_labels  = np.eye(self.num_classes + 1)[png.reshape([-1])]
-            seg_labels  = seg_labels.reshape((int(self.input_shape[1]), int(self.input_shape[0]), self.num_classes+1))
+            # 将标签转换成one-hot的形式
+            seg_labels = np.eye(self.num_classes + 1)[png.reshape([-1])]
+            seg_labels = seg_labels.reshape((int(self.input_shape[1]), int(self.input_shape[0]), self.num_classes+1))
 
             images.append(jpg)
             targets.append(seg_labels)
 
-        images  = np.array(images)
+        images = np.array(images)
         targets = np.array(targets)
         return images, targets
 
-    def generate(self):
+    def __call__(self):
         i = 0
         while True:
             images  = []
@@ -67,31 +58,22 @@ class DeeplabDataset(keras.utils.Sequence):
                 if i==0:
                     np.random.shuffle(self.annotation_lines)
                 name        = self.annotation_lines[i].split()[0]
-                #-------------------------------#
-                #   从文件中读取图像
-                #-------------------------------#
-                jpg         = Image.open(os.path.join(os.path.join(self.dataset_path, "VOC2007/JPEGImages"), name + ".jpg"))
-                png         = Image.open(os.path.join(os.path.join(self.dataset_path, "VOC2007/SegmentationClass"), name + ".png"))
-                #-------------------------------#
-                #   数据增强
-                #-------------------------------#
-                jpg, png    = self.get_random_data(jpg, png, self.input_shape, random = self.train)
-                jpg         = preprocess_input(np.array(jpg, np.float64))
-                png         = np.array(png)
+                # 读取标签
+                jpg = Image.open(os.path.join(os.path.join(self.dataset_path, self.JPEGImages_path), name + ".jpg"))
+                png = Image.open(os.path.join(os.path.join(self.dataset_path, self.Labels_path), name + ".png"))
+                jpg, png = self.get_random_data(jpg, png, self.input_shape, random = self.train)
+                jpg = preprocess_input(np.array(jpg, np.float64))
+                png = np.array(png)
                 png[png >= self.num_classes] = self.num_classes
-                #-------------------------------------------------------#
-                #   转化成one_hot的形式
-                #   在这里需要+1是因为voc数据集有些标签具有白边部分
-                #   我们需要将白边部分进行忽略，+1的目的是方便忽略。
-                #-------------------------------------------------------#
-                seg_labels  = np.eye(self.num_classes + 1)[png.reshape([-1])]
-                seg_labels  = seg_labels.reshape((int(self.input_shape[1]), int(self.input_shape[0]), self.num_classes+1))
+                # 标签转换成one-hot形式
+                seg_labels = np.eye(self.num_classes + 1)[png.reshape([-1])]
+                seg_labels = seg_labels.reshape((int(self.input_shape[1]), int(self.input_shape[0]), self.num_classes+1))
 
                 images.append(jpg)
                 targets.append(seg_labels)
-                i           = (i + 1) % self.length
+                i = (i + 1) % self.length
                 
-            images  = np.array(images)
+            images = np.array(images)
             targets = np.array(targets)
             yield images, targets
             
@@ -104,17 +86,17 @@ class DeeplabDataset(keras.utils.Sequence):
         h, w = input_shape
 
         if not random:
-            iw, ih  = image.size
-            scale   = min(w/iw, h/ih)
-            nw      = int(iw*scale)
-            nh      = int(ih*scale)
+            iw, ih = image.size
+            scale = min(w/iw, h/ih)
+            nw = int(iw*scale)
+            nh = int(ih*scale)
 
-            image       = image.resize((nw,nh), Image.BICUBIC)
-            new_image   = Image.new('RGB', [w, h], (128,128,128))
+            image = image.resize((nw,nh), Image.BICUBIC)
+            new_image = Image.new('RGB', [w, h], (128,128,128))
             new_image.paste(image, ((w-nw)//2, (h-nh)//2))
 
-            label       = label.resize((nw,nh), Image.NEAREST)
-            new_label   = Image.new('L', [w, h], (0))
+            label = label.resize((nw,nh), Image.NEAREST)
+            new_label = Image.new('L', [w, h], (0))
             new_label.paste(label, ((w-nw)//2, (h-nh)//2))
             return new_image, new_label
 
