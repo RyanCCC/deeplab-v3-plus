@@ -1,3 +1,6 @@
+from pickle import TRUE
+
+
 num_classes = 19
 backbone    = "xception"
 model_path  = "model/deeplabv3tf2_xception.h5"
@@ -17,3 +20,15 @@ LABEL_COLORS = [(128, 64, 128), (231, 35, 244), (69, 69, 69)
                 # 15 = bus, 16 = train, 17 = motocycle
                 ,(119, 10, 32)]
                 # 18 = bicycle
+
+downsample_factor = 16
+input_shape = [512, 512]
+START_EPOCH = 0
+Freeze_Epoch = 100
+FREEZE_BATCHSIZE = 8
+FREEZE_LEARNING_RATE = 5e-4
+UNFREEZE_EPOCH = 200
+UNFREEZE_BATCHSIZE = 4
+UNFREEZE_LEARNING_RATE = 5e-5
+FREEZE_TRAIN = True
+DICE_LOSS = False

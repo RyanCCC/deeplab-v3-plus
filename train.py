@@ -28,20 +28,19 @@ if __name__ == "__main__":
     model_path  = sys_config.model_path
     #   下采样的倍数8、16 
     #   8要求更大的显存
-    downsample_factor   = 16
-    input_shape         = [512, 512]
-    Init_Epoch          = 0
-    Freeze_Epoch        = 50
-    Freeze_batch_size   = 8
-    Freeze_lr           = 5e-4
-    UnFreeze_Epoch      = 100
-    Unfreeze_batch_size = 4
-    Unfreeze_lr         = 5e-5
+    downsample_factor   = sys_config.downsample_factor
+    input_shape         = sys_config.input_shape
+    Init_Epoch          = sys_config.START_EPOCH
+    Freeze_Epoch        = sys_config.Freeze_Epoch
+    Freeze_batch_size   = sys_config.FREEZE_BATCHSIZE
+    Freeze_lr           = sys_config.FREEZE_LEARNING_RATE
+    UnFreeze_Epoch      = sys_config.UNFREEZE_EPOCH
+    Unfreeze_batch_size = sys_config.UNFREEZE_BATCHSIZE
+    Unfreeze_lr         = sys_config.UNFREEZE_LEARNING_RATE
 
     dataset_path  = sys_config.dataset_path
-    dice_loss       = False
-    Freeze_Train    = True
-    num_workers     = 0
+    dice_loss       = sys_config.DICE_LOSS
+    Freeze_Train    = sys_config.FREEZE_TRAIN
 
 
     model = Deeplabv3([input_shape[0], input_shape[1], 3], num_classes, backbone = backbone, downsample_factor = downsample_factor)
@@ -70,59 +69,49 @@ if __name__ == "__main__":
         for i in range(freeze_layers): model.layers[i].trainable = False
         print('Freeze the first {} layers of total {} layers.'.format(freeze_layers, len(model.layers)))
 
-    if True:
-        batch_size  = Freeze_batch_size
-        lr          = Freeze_lr
-        start_epoch = Init_Epoch
-        end_epoch   = Freeze_Epoch
+    batch_size  = Freeze_batch_size
+    lr          = Freeze_lr
+    start_epoch = Init_Epoch
+    end_epoch   = Freeze_Epoch
 
-        train_dataloader    = DeeplabDataset(train_lines, input_shape, batch_size, num_classes, True, dataset_path, 'JPEGImage', 'Label')
-        val_dataloader      = DeeplabDataset(val_lines, input_shape, batch_size, num_classes, False, dataset_path, 'JPEGImage', 'Label')
+    train_dataloader    = DeeplabDataset(train_lines, input_shape, batch_size, num_classes, True, dataset_path, 'JPEGImage', 'Label')
+    val_dataloader      = DeeplabDataset(val_lines, input_shape, batch_size, num_classes, False, dataset_path, 'JPEGImage', 'Label')
 
-        epoch_step      = len(train_lines) // batch_size
-        epoch_step_val  = len(val_lines) // batch_size
+    epoch_step      = len(train_lines) // batch_size
+    epoch_step_val  = len(val_lines) // batch_size
         
-        if epoch_step == 0 or epoch_step_val == 0:
-            raise ValueError("数据集过小，无法进行训练，请扩充数据集。")
+    if epoch_step == 0 or epoch_step_val == 0:
+        raise ValueError("数据集过小，无法进行训练，请扩充数据集。")
 
-        print('Train on {} samples, val on {} samples, with batch size {}.'.format(len(train_lines), len(val_lines), batch_size))
-        if eager:
-            gen     = tf.data.Dataset.from_generator(partial(train_dataloader()), (tf.float32, tf.float32))
-            gen_val = tf.data.Dataset.from_generator(partial(val_dataloader()), (tf.float32, tf.float32))
+    print('Train on {} samples, val on {} samples, with batch size {}.'.format(len(train_lines), len(val_lines), batch_size))
+    if eager:
+        gen     = tf.data.Dataset.from_generator(partial(train_dataloader()), (tf.float32, tf.float32))
+        gen_val = tf.data.Dataset.from_generator(partial(val_dataloader()), (tf.float32, tf.float32))
+        gen     = gen.shuffle(buffer_size = batch_size).prefetch(buffer_size = batch_size)
+        gen_val = gen_val.shuffle(buffer_size = batch_size).prefetch(buffer_size = batch_size)
+        lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(initial_learning_rate = lr, decay_steps = epoch_step, decay_rate=0.92, staircase=True)    
+        optimizer = tf.keras.optimizers.Adam(learning_rate = lr_schedule)
 
-            gen     = gen.shuffle(buffer_size = batch_size).prefetch(buffer_size = batch_size)
-            gen_val = gen_val.shuffle(buffer_size = batch_size).prefetch(buffer_size = batch_size)
-
-            lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
-                initial_learning_rate = lr, decay_steps = epoch_step, decay_rate=0.92, staircase=True)
-            
-            optimizer = tf.keras.optimizers.Adam(learning_rate = lr_schedule)
-
-            for epoch in range(start_epoch, end_epoch):
-                fit_one_epoch(model, loss, optimizer, epoch, epoch_step, epoch_step_val, gen, gen_val, 
+        for epoch in range(start_epoch, end_epoch):
+            fit_one_epoch(model, loss, optimizer, epoch, epoch_step, epoch_step_val, gen, gen_val, 
                             end_epoch, f_score())
 
-        else:
-            model.compile(loss = loss,
-                    optimizer = Adam(lr=lr),
-                    metrics = [f_score()])
+    else:
+        model.compile(loss = loss,optimizer = Adam(lr=lr),metrics = [f_score()])
 
-            model.fit_generator(
-                generator           = train_dataloader,
-                steps_per_epoch     = epoch_step,
-                validation_data     = val_dataloader,
-                validation_steps    = epoch_step_val,
-                epochs              = end_epoch,
-                initial_epoch       = start_epoch,
-                use_multiprocessing = True if num_workers != 0 else False,
-                workers             = num_workers,
-                callbacks           = [logging, checkpoint, reduce_lr, early_stopping]
-            )
+        model.fit_generator(
+            generator           = train_dataloader,
+            steps_per_epoch     = epoch_step,
+            validation_data     = val_dataloader,
+            validation_steps    = epoch_step_val,
+            epochs              = end_epoch,
+            initial_epoch       = start_epoch,
+            callbacks           = [logging, checkpoint, reduce_lr, early_stopping]
+        )
 
     if Freeze_Train:
         for i in range(freeze_layers): model.layers[i].trainable = True
 
-    if True:
         batch_size  = Unfreeze_batch_size
         lr          = Unfreeze_lr
         start_epoch = Freeze_Epoch
@@ -166,7 +155,5 @@ if __name__ == "__main__":
                 validation_steps    = epoch_step_val,
                 epochs              = end_epoch,
                 initial_epoch       = start_epoch,
-                use_multiprocessing = True if num_workers != 0 else False,
-                workers             = num_workers,
                 callbacks           = [logging, checkpoint, reduce_lr, early_stopping]
             )
