@@ -13,6 +13,7 @@ for gpu in gpus:
     tf.config.experimental.set_memory_growth(gpu, True)
     
 if __name__ == "__main__":
+    model = tf.keras.models.load_model('./cityscapes_model')
     deeplab = DeeplabV3()
     mode = "predict"
     # 视频语义分割
