@@ -19,9 +19,6 @@ def _inverted_res_block(inputs, expansion, stride, alpha, in_filters, filters, b
     prefix = 'expanded_conv_{}_'.format(block_id)
 
     x = inputs
-    #----------------------------------------------------#
-    #   利用1x1卷积根据输入进来的通道数进行通道数上升
-    #----------------------------------------------------#
     if block_id:
         x = Conv2D(expansion * in_filters, kernel_size=1, padding='same',
                    use_bias=False, activation=None,
