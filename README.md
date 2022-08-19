@@ -69,4 +69,3 @@ Deeplabv1做了以下的修改：
 
 ## 参考
 1. [语义分割综述](https://arxiv.org/abs/2001.05566)
-2. [DeeplabV3+ Tensorflow2.0实现](https://github.com/RyanCCC/DeeplabV3Plus/tree/main)有用的话请给我一个star，非常感谢！
