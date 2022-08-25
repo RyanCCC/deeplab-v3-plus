@@ -23,11 +23,11 @@ def val_step(images, labels, net, optimizer, loss, metrics):
     return loss_value, _f_score
 
 def fit_one_epoch(net, loss, loss_history, optimizer, epoch, epoch_step, epoch_step_val, gen, gen_val, Epoch, metrics):
-    train_step      = get_train_step_fn()
-    total_loss      = 0
-    val_loss        = 0
-    total_f_score   = 0
-    val_f_score     = 0
+    train_step = get_train_step_fn()
+    total_loss = 0
+    val_loss = 0
+    total_f_score = 0
+    val_f_score = 0
     print('Start Train')
     with tqdm(total=epoch_step,desc=f'Epoch {epoch + 1}/{Epoch}',postfix=dict,mininterval=0.3) as pbar:
         for iteration, batch in enumerate(gen):
@@ -37,15 +37,13 @@ def fit_one_epoch(net, loss, loss_history, optimizer, epoch, epoch_step, epoch_s
             labels = tf.cast(tf.convert_to_tensor(labels), tf.float32)
 
             loss_value, _f_score = train_step(images, labels, net, optimizer, loss, metrics)
-            total_loss      += loss_value.numpy()
-            total_f_score   += _f_score.numpy()
-
+            total_loss += loss_value.numpy()
+            total_f_score += _f_score.numpy()
             pbar.set_postfix(**{'total Loss'    : total_loss / (iteration + 1), 
                                 'total f_score' : total_f_score / (iteration + 1),
                                 'lr'            : optimizer._decayed_lr(tf.float32).numpy()})
             pbar.update(1)
     print('Finish Train')
-            
     print('Start Validation')
     with tqdm(total=epoch_step_val, desc=f'Epoch {epoch + 1}/{Epoch}',postfix=dict,mininterval=0.3) as pbar:
         for iteration, batch in enumerate(gen_val):
