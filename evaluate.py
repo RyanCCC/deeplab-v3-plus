@@ -2,14 +2,14 @@ import os
 
 from PIL import Image
 from tqdm import tqdm
-
+from utils.utils import get_classes
 from inference import pred_func
-from utils.utils_metrics import compute_mIoU
+from utils.metrics import compute_mIoU
 
 if __name__ == "__main__":
     miou_mode = 0
     num_classes = 21
-    name_classes = ["background","aeroplane", "bicycle", "bird", "boat", "bottle", "bus", "car", "cat", "chair", "cow", "diningtable", "dog", "horse", "motorbike", "person", "pottedplant", "sheep", "sofa", "train", "tvmonitor"]
+    name_classes = get_classes('./data/VOCdevkit.names')
     VOCdevkit_path  = 'VOCdevkit'
 
     image_ids = open(os.path.join(VOCdevkit_path, "VOC2007/ImageSets/Segmentation/val.txt"),'r').read().splitlines() 

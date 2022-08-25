@@ -1,5 +1,6 @@
 import numpy as np
 from PIL import Image
+import os
 
 def cvtColor(image):
     if len(np.shape(image)) == 3 and np.shape(image)[-2] == 3:
@@ -25,3 +26,10 @@ def resize_image(image, size):
 def preprocess_input(image):
     image = image / 127.5 - 1
     return image
+
+def get_classes(classes_path):
+    '''loads the classes'''
+    with open(classes_path) as f:
+        class_names = f.readlines()
+    class_names = [c.strip() for c in class_names]
+    return class_names
