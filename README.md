@@ -33,6 +33,8 @@
 
 ## 算法训练
 
+DeepV3实现有两个版本，一个是基于Tensorflow2实现，另一个是基于Pytorch实现的。
+
 
 ## 验证评估
 
@@ -42,3 +44,6 @@
 
 ## 参考
 
+1. [Deeplab系列算法](./doc/Deeplab.md)
+2. [pytorch-deeplab-xception](https://github.com/jfzhang95/pytorch-deeplab-xception)
+3. [keras-deeplab-v3-plus](https://github.com/bonlime/keras-deeplab-v3-plus)
