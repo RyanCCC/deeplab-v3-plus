@@ -6,7 +6,6 @@ import cv2
 import numpy as np
 from PIL import Image
 from tensorflow import keras
-
 from utils.utils import cvtColor, preprocess_input
 
 

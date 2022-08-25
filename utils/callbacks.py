@@ -1,6 +1,4 @@
-import os
 import warnings
-
 import numpy as np
 from tensorflow import keras
 from tensorflow.keras import backend as K

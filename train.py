@@ -1,17 +1,14 @@
 import os
 from functools import partial
-
 import tensorflow as tf
 from tensorflow.keras.callbacks import EarlyStopping, TensorBoard
 from tensorflow.keras.optimizers import Adam
-
 from nets.deeplab import Deeplabv3
 from nets.loss import CE, dice_loss_with_CE
-from utils.callbacks import (ExponentDecayScheduler,
-                             ModelCheckpoint)
+from utils.callbacks import ExponentDecayScheduler,ModelCheckpoint
 from utils.dataloader import DeeplabDataset
-from utils.utils_fit import fit_one_epoch
-from utils.utils_metrics import Iou_score, f_score, fast_hist
+from utils.trainmethod import fit_one_epoch
+from utils.metrics import Iou_score, f_score, fast_hist
 import config as sys_config
 
 gpus = tf.config.experimental.list_physical_devices(device_type='GPU')
@@ -98,7 +95,6 @@ if __name__ == "__main__":
 
     else:
         model.compile(loss = loss,optimizer = Adam(lr=lr),metrics = [f_score()])
-
         model.fit_generator(
             generator           = train_dataloader,
             steps_per_epoch     = epoch_step,
@@ -117,8 +113,8 @@ if __name__ == "__main__":
         start_epoch = Freeze_Epoch
         end_epoch   = UnFreeze_Epoch
 
-        train_dataloader    = DeeplabDataset(train_lines, input_shape, batch_size, num_classes, True, dataset_path, 'JPEGImage', 'Label')
-        val_dataloader      = DeeplabDataset(val_lines, input_shape, batch_size, num_classes, False, dataset_path, 'JPEGImage', 'Label')
+        train_dataloader = DeeplabDataset(train_lines, input_shape, batch_size, num_classes, True, dataset_path, 'JPEGImage', 'Label')
+        val_dataloader  = DeeplabDataset(val_lines, input_shape, batch_size, num_classes, False, dataset_path, 'JPEGImage', 'Label')
 
         epoch_step      = len(train_lines) // batch_size
         epoch_step_val  = len(val_lines) // batch_size
