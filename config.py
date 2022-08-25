@@ -33,3 +33,5 @@ UNFREEZE_LEARNING_RATE = 5e-5
 FREEZE_TRAIN = True
 DICE_LOSS = False
 MODEL_WEIGHTS = './model/model_1.h5'
+checkpoint = './road.h5'
+logdir =  './logs'

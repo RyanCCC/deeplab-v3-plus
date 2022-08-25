@@ -2,15 +2,15 @@
 import os
 import random
 
-trainval_percent    = 1
-train_percent       = 0.9
+trainval_percent = 1
+train_percent = 0.9
 VOCdevkit_path  = './Cityscapes'
 
 if __name__ == "__main__":
     random.seed(0)
     print("Generate txt in ImageSets.")
-    segfilepath     = os.path.join(VOCdevkit_path, 'Label')
-    saveBasePath    = os.path.join(VOCdevkit_path, '')
+    segfilepath = os.path.join(VOCdevkit_path, 'Label')
+    saveBasePath = os.path.join(VOCdevkit_path, '')
     
     temp_seg = os.listdir(segfilepath)
     total_seg = []
@@ -18,21 +18,21 @@ if __name__ == "__main__":
         if seg.endswith(".png"):
             total_seg.append(seg)
 
-    num     = len(total_seg)  
-    list    = range(num)  
-    tv      = int(num*trainval_percent)  
-    tr      = int(tv*train_percent)  
+    num = len(total_seg)
+    list = range(num)  
+    tv = int(num*trainval_percent)  
+    tr = int(tv*train_percent)  
     trainval= random.sample(list,tv)  
-    train   = random.sample(trainval,tr)  
+    train = random.sample(trainval,tr)  
     
     print("train and val size",tv)
     print("traub suze",tr)
-    ftrainval   = open(os.path.join(saveBasePath,'trainval.txt'), 'w')  
-    ftest       = open(os.path.join(saveBasePath,'test.txt'), 'w')  
-    ftrain      = open(os.path.join(saveBasePath,'train.txt'), 'w')  
-    fval        = open(os.path.join(saveBasePath,'val.txt'), 'w')  
+    ftrainval = open(os.path.join(saveBasePath,'trainval.txt'), 'w')  
+    ftest = open(os.path.join(saveBasePath,'test.txt'), 'w')  
+    ftrain = open(os.path.join(saveBasePath,'train.txt'), 'w')  
+    fval = open(os.path.join(saveBasePath,'val.txt'), 'w')  
     
-    for i  in list:  
+    for i in list:  
         name=total_seg[i][:-4]+'\n'  
         if i in trainval:  
             ftrainval.write(name)  

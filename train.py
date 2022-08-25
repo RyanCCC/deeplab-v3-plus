@@ -29,18 +29,18 @@ if __name__ == "__main__":
     #   下采样的倍数8、16 
     #   8要求更大的显存
     downsample_factor   = sys_config.downsample_factor
-    input_shape         = sys_config.input_shape
-    Init_Epoch          = sys_config.START_EPOCH
-    Freeze_Epoch        = sys_config.Freeze_Epoch
+    input_shape = sys_config.input_shape
+    Init_Epoch = sys_config.START_EPOCH
+    Freeze_Epoch = sys_config.Freeze_Epoch
     Freeze_batch_size   = sys_config.FREEZE_BATCHSIZE
-    Freeze_lr           = sys_config.FREEZE_LEARNING_RATE
-    UnFreeze_Epoch      = sys_config.UNFREEZE_EPOCH
+    Freeze_lr = sys_config.FREEZE_LEARNING_RATE
+    UnFreeze_Epoch = sys_config.UNFREEZE_EPOCH
     Unfreeze_batch_size = sys_config.UNFREEZE_BATCHSIZE
-    Unfreeze_lr         = sys_config.UNFREEZE_LEARNING_RATE
+    Unfreeze_lr = sys_config.UNFREEZE_LEARNING_RATE
 
-    dataset_path  = sys_config.dataset_path
-    dice_loss       = sys_config.DICE_LOSS
-    Freeze_Train    = sys_config.FREEZE_TRAIN
+    dataset_path = sys_config.dataset_path
+    dice_loss = sys_config.DICE_LOSS
+    Freeze_Train = sys_config.FREEZE_TRAIN
 
 
     model = Deeplabv3([input_shape[0], input_shape[1], 3], num_classes, backbone = backbone, downsample_factor = downsample_factor)
@@ -51,16 +51,16 @@ if __name__ == "__main__":
 
     with open(os.path.join(dataset_path, "val.txt"),"r") as f:
         val_lines = f.readlines()
-
-    logging         = TensorBoard(log_dir = 'logs/')
-    checkpoint_path = os.path.join('logs', 'model.h5')
-    checkpoint      = ModelCheckpoint(checkpoint_path,
-                        monitor = 'val_loss', save_weights_only = True, save_best_only = False, period = 1)
-    reduce_lr       = ExponentDecayScheduler(decay_rate = 0.92, verbose = 1)
+    
+    log_dir = sys_config.logdir
+    logging = TensorBoard(log_dir = log_dir)
+    checkpoint_path = os.path.join(log_dir, sys_config.checkpoint)
+    checkpoint  = ModelCheckpoint(checkpoint_path, monitor = 'val_loss', save_weights_only = True, save_best_only = False, period = 1)
+    reduce_lr = ExponentDecayScheduler(decay_rate = 0.92, verbose = 1)
     early_stopping  = EarlyStopping(monitor='val_loss', min_delta=0, patience=10, verbose=1)
 
 
-    loss            = dice_loss_with_CE() if dice_loss else CE()
+    loss = dice_loss_with_CE() if dice_loss else CE()
     if backbone=="mobilenet":
         freeze_layers = 146
     else:
@@ -70,11 +70,11 @@ if __name__ == "__main__":
         print('Freeze the first {} layers of total {} layers.'.format(freeze_layers, len(model.layers)))
 
     batch_size  = Freeze_batch_size
-    lr          = Freeze_lr
+    lr = Freeze_lr
     start_epoch = Init_Epoch
     end_epoch   = Freeze_Epoch
 
-    train_dataloader    = DeeplabDataset(train_lines, input_shape, batch_size, num_classes, True, dataset_path, 'JPEGImage', 'Label')
+    train_dataloader = DeeplabDataset(train_lines, input_shape, batch_size, num_classes, True, dataset_path, 'JPEGImage', 'Label')
     val_dataloader      = DeeplabDataset(val_lines, input_shape, batch_size, num_classes, False, dataset_path, 'JPEGImage', 'Label')
 
     epoch_step      = len(train_lines) // batch_size

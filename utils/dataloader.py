@@ -13,10 +13,10 @@ from utils.utils import cvtColor, preprocess_input
 class DeeplabDataset(keras.utils.Sequence):
     def __init__(self, annotation_lines, input_shape, batch_size, num_classes, train, dataset_path, JPEGImages="VOC2007/JPEGImages", Labels = "VOC2007/SegmentationClass"):
         self.annotation_lines   = annotation_lines
-        self.length             = len(self.annotation_lines)
-        self.input_shape        = input_shape
-        self.batch_size         = batch_size
-        self.num_classes        = num_classes
+        self.length  = len(self.annotation_lines)
+        self.input_shape = input_shape
+        self.batch_size  = batch_size
+        self.num_classes  = num_classes
         self.train              = train
         self.dataset_path       = dataset_path
         self.JPEGImages_path = JPEGImages
@@ -31,7 +31,7 @@ class DeeplabDataset(keras.utils.Sequence):
         for i in range(index * self.batch_size, (index + 1) * self.batch_size):  
             i = i % self.length
             name = self.annotation_lines[i].split()[0]
-            jpg = Image.open(os.path.join(os.path.join(self.dataset_path, self.JPEGImages_path), name + ".png"))
+            jpg = Image.open(os.path.join(os.path.join(self.dataset_path, self.JPEGImages_path), name + ".jpg"))
             png = Image.open(os.path.join(os.path.join(self.dataset_path, self.Labels_path), name + ".png"))
             # 数据增强
             jpg, png = self.get_random_data(jpg, png, self.input_shape, random = self.train)
