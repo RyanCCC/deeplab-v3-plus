@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from PIL import Image
 
 def decode_seg_map_sequence(label_masks, dataset='pascal'):
     rgb_masks = []
@@ -42,8 +43,8 @@ def decode_segmap(label_mask, dataset, plot=False):
     rgb[:, :, 1] = g / 255.0
     rgb[:, :, 2] = b / 255.0
     if plot:
-        plt.imshow(rgb)
-        plt.show()
+        rgb = Image.fromarray((rgb * 255).astype(np.uint8))
+        rgb.show()
     else:
         return rgb
 
