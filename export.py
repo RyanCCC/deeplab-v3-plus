@@ -15,6 +15,7 @@ def parser_opt():
     parser.add_argument('--save_onnx', type=str, help='save onnx model name', required=True, default='')
     parser.add_argument('--opset', type=int, default=12, help='ONNX: opset version')
     parser.add_argument('--num_class', type=int, required=True, help='类别数')
+    parser.add_argument('--backbone', choices=['mobilenet', 'xception'], default='xception',help='骨干网络：backbone, mobilenet')
     return parser
 
 
@@ -23,6 +24,7 @@ def main(args):
     onnx_save_path = args.save_onnx
     opset = args.opset
     saved_model = args.model_path
+    backbone = args.backbone
     if args.flag:
         '''
         从tensorflow模型中导出onnx模型
@@ -34,7 +36,7 @@ def main(args):
         print(output_names)
     else:
         model = Deeplabv3(input_shape=[sys_config.input_shape[0], sys_config.input_shape[1], 3], num_classes= num_class,
-                               backbone= sys_config.backbone, downsample_factor= sys_config.downsample_factor)
+                               backbone= backbone, downsample_factor= sys_config.downsample_factor)
         model.load_weights(saved_model)
         save_pb = args.saved_pb
         if save_pb:

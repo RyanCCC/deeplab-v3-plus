@@ -67,3 +67,4 @@ logs
 
 cityscapes_model
 checkpoints
+*.onnx
