@@ -33,13 +33,17 @@
 
 ## 算法训练
 
-DeepV3实现有两个版本，一个是基于Tensorflow2实现，另一个是基于Pytorch实现的。
+DeepV3实现有两个版本，一个是基于`Tensorflow2`实现，另一个是基于`Pytorch`实现的。基于`Pytorch`可参考pytorch文件夹下的代码。
 
 
 ## 验证评估
 
+使用`mIoU`指标评估模型，具体可参考`export.py`代码。
+
 
 ## 模型导出
+
+可参考`export.py`代码。可从权重文件中导出`ONNX`模型。
 
 
 ## 参考

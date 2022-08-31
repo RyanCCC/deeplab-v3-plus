@@ -22,7 +22,6 @@ if __name__ == '__main__':
     model.load_state_dict(state_dict['state_dict'])
     model.eval()
     model.to(device)
-
     torch.set_grad_enabled(False)
     # 图像预处理
     image_path = './images/2007_000720.jpg'
