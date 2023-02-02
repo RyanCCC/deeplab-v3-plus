@@ -33,7 +33,7 @@
 
 ## 算法训练
 
-DeepV3实现有两个版本，一个是基于`Tensorflow2`实现，另一个是基于`Pytorch`实现的。基于`Pytorch`可参考pytorch文件夹下的代码。
+DeepV3实现有两个版本，一个是基于`Tensorflow2`实现，另一个是基于`Pytorch`实现的。基于`Pytorch`可参考pytorch分支的代码。
 
 
 ## 验证评估
