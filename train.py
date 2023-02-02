@@ -1,155 +1,245 @@
 import os
-from functools import partial
-import tensorflow as tf
-from tensorflow.keras.callbacks import EarlyStopping, TensorBoard
-from tensorflow.keras.optimizers import Adam
-from nets.deeplab import Deeplabv3
-from nets.loss import CE, dice_loss_with_CE
-from utils.callbacks import ExponentDecayScheduler,ModelCheckpoint
-from utils.dataloader import DeeplabDataset
-from utils.trainmethod import fit_one_epoch
-from utils.metrics import Iou_score, f_score, fast_hist
-import config as sys_config
+import datetime
 
-gpus = tf.config.experimental.list_physical_devices(device_type='GPU')
-for gpu in gpus:
-    tf.config.experimental.set_memory_growth(gpu, True)
-    
+import numpy as np
+import torch
+import torch.backends.cudnn as cudnn
+import torch.distributed as dist
+import torch.optim as optim
+from torch.utils.data import DataLoader
+
+from nets.deeplab import DeepLab
+from nets.loss import get_lr_scheduler, set_optimizer_lr,weights_init
+from utils.callbacks import LossHistory, EvalCallback
+from utils.dataloader import DeeplabDataset, deeplab_dataset_collate
+from utils.tools import download_weights, show_config, fit_one_epoch
+import config
 
 if __name__ == "__main__":
+    Cuda = config.cuda
+    distributed = config.distributed
+    sync_bn = config.sync_bn 
+    fp16 = False
+    num_classes = config.num_classes+1
+    backbone = config.backbone
+    pretrained = config.pretrained
+    model_path = config.model_path
+    downsample_factor   = config.downsample_factor
+    input_shape = config.input_shape
+    Init_Epoch = config.START_EPOCH
+    Freeze_Epoch = config.Freeze_Epoch
+    Freeze_batch_size = config.FREEZE_BATCHSIZE
 
-    eager       = False
-    num_classes = sys_config.num_classes
-    #   mobilenet、xception 
-    backbone    = sys_config.backbone
-    model_path  = sys_config.model_path
-    #   下采样的倍数8、16 
-    #   8要求更大的显存
-    downsample_factor   = sys_config.downsample_factor
-    input_shape = sys_config.input_shape
-    Init_Epoch = sys_config.START_EPOCH
-    Freeze_Epoch = sys_config.Freeze_Epoch
-    Freeze_batch_size   = sys_config.FREEZE_BATCHSIZE
-    Freeze_lr = sys_config.FREEZE_LEARNING_RATE
-    UnFreeze_Epoch = sys_config.UNFREEZE_EPOCH
-    Unfreeze_batch_size = sys_config.UNFREEZE_BATCHSIZE
-    Unfreeze_lr = sys_config.UNFREEZE_LEARNING_RATE
+    UnFreeze_Epoch = config.UNFREEZE_EPOCH
+    Unfreeze_batch_size = config.UNFREEZE_BATCHSIZE
+    Freeze_Train = config.FREEZE_TRAIN
+    Init_lr = config.LEARNING_RATE
+    Min_lr = Init_lr * 0.01
+    optimizer_type = "sgd"
+    momentum = 0.9
+    weight_decay = 1e-4
+    lr_decay_type = 'cos'
+    save_period = config.save_period
+    save_dir = config.logdir
+    eval_flag = True
+    eval_period = 5
+    VOCdevkit_path  = config.dataset_path
+    dice_loss = False
+    focal_loss = False
+    cls_weights     = np.ones([num_classes], np.float32)
+    num_workers = 4
 
-    dataset_path = sys_config.dataset_path
-    dice_loss = sys_config.DICE_LOSS
-    Freeze_Train = sys_config.FREEZE_TRAIN
-
-
-    model = Deeplabv3([input_shape[0], input_shape[1], 3], num_classes, backbone = backbone, downsample_factor = downsample_factor)
-
-    model.load_weights(model_path, by_name=True,skip_mismatch=True)
-    with open(os.path.join(dataset_path, "train.txt"),"r") as f:
-        train_lines = f.readlines()
-
-    with open(os.path.join(dataset_path, "val.txt"),"r") as f:
-        val_lines = f.readlines()
-    
-    log_dir = sys_config.logdir
-    logging = TensorBoard(log_dir = log_dir)
-    checkpoint_path = os.path.join(log_dir, sys_config.checkpoint)
-    checkpoint  = ModelCheckpoint(checkpoint_path, monitor = 'val_loss', save_weights_only = True, save_best_only = False, period = 1)
-    reduce_lr = ExponentDecayScheduler(decay_rate = 0.92, verbose = 1)
-    early_stopping  = EarlyStopping(monitor='val_loss', min_delta=0, patience=10, verbose=1)
-
-
-    loss = dice_loss_with_CE() if dice_loss else CE()
-    if backbone=="mobilenet":
-        freeze_layers = 146
+    # 设置显卡
+    ngpus_per_node  = torch.cuda.device_count()
+    if distributed:
+        dist.init_process_group(backend="nccl")
+        local_rank  = int(os.environ["LOCAL_RANK"])
+        rank        = int(os.environ["RANK"])
+        device      = torch.device("cuda", local_rank)
+        if local_rank == 0:
+            print(f"[{os.getpid()}] (rank = {rank}, local_rank = {local_rank}) training...")
+            print("Gpu Device Count : ", ngpus_per_node)
     else:
-        freeze_layers = 358
+        device          = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        local_rank      = 0
+
+    if pretrained:
+        if distributed:
+            if local_rank == 0:
+                download_weights(backbone)  
+            dist.barrier()
+        else:
+            download_weights(backbone)
+
+    model   = DeepLab(num_classes=num_classes, backbone=backbone, downsample_factor=downsample_factor, pretrained=pretrained)
+    if not pretrained:
+        weights_init(model)
+    if model_path != '':
+        if local_rank == 0:
+            print('Load weights {}.'.format(model_path))
+        model_dict      = model.state_dict()
+        pretrained_dict = torch.load(model_path, map_location = device)
+        load_key, no_load_key, temp_dict = [], [], {}
+        for k, v in pretrained_dict.items():
+            if k in model_dict.keys() and np.shape(model_dict[k]) == np.shape(v):
+                temp_dict[k] = v
+                load_key.append(k)
+            else:
+                no_load_key.append(k)
+        model_dict.update(temp_dict)
+        model.load_state_dict(model_dict)
+        if local_rank == 0:
+            print("\nSuccessful Load Key:", str(load_key)[:500], "……\nSuccessful Load Key Num:", len(load_key))
+            print("\nFail To Load Key:", str(no_load_key)[:500], "……\nFail To Load Key num:", len(no_load_key))
+            print("\n\033[1;33;44m温馨提示，head部分没有载入是正常现象，Backbone部分没有载入是错误的。\033[0m")
+
+    if local_rank == 0:
+        time_str        = datetime.datetime.strftime(datetime.datetime.now(),'%Y_%m_%d_%H_%M_%S')
+        log_dir         = os.path.join(save_dir, "loss_" + str(time_str))
+        loss_history    = LossHistory(log_dir, model, input_shape=input_shape)
+    else:
+        loss_history    = None
+
+    if fp16:
+        from torch.cuda.amp import GradScaler as GradScaler
+        scaler = GradScaler()
+    else:
+        scaler = None
+
+    model_train     = model.train()
+    if sync_bn and ngpus_per_node > 1 and distributed:
+        model_train = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model_train)
+    elif sync_bn:
+        print("Sync_bn is not support in one gpu or not distributed.")
+
+    if Cuda:
+        if distributed:
+            model_train = model_train.cuda(local_rank)
+            model_train = torch.nn.parallel.DistributedDataParallel(model_train, device_ids=[local_rank], find_unused_parameters=True)
+        else:
+            model_train = torch.nn.DataParallel(model)
+            cudnn.benchmark = True
+            model_train = model_train.cuda()
+    
+    with open(os.path.join(VOCdevkit_path, "ImageSets/Segmentation/train.txt"),"r") as f:
+        train_lines = f.readlines()
+    with open(os.path.join(VOCdevkit_path, "ImageSets/Segmentation/val.txt"),"r") as f:
+        val_lines = f.readlines()
+    num_train   = len(train_lines)
+    num_val     = len(val_lines)
+
+    if local_rank == 0:
+        show_config(
+            num_classes = num_classes, backbone = backbone, model_path = model_path, input_shape = input_shape, \
+            Init_Epoch = Init_Epoch, Freeze_Epoch = Freeze_Epoch, UnFreeze_Epoch = UnFreeze_Epoch, Freeze_batch_size = Freeze_batch_size, Unfreeze_batch_size = Unfreeze_batch_size, Freeze_Train = Freeze_Train, \
+            Init_lr = Init_lr, Min_lr = Min_lr, optimizer_type = optimizer_type, momentum = momentum, lr_decay_type = lr_decay_type, \
+            save_period = save_period, save_dir = save_dir, num_workers = num_workers, num_train = num_train, num_val = num_val
+        )
+        wanted_step = 1.5e4 if optimizer_type == "sgd" else 0.5e4
+        total_step  = num_train // Unfreeze_batch_size * UnFreeze_Epoch
+        if total_step <= wanted_step:
+            if num_train // Unfreeze_batch_size == 0:
+                raise ValueError('数据集过小，无法进行训练，请扩充数据集。')
+            wanted_epoch = wanted_step // (num_train // Unfreeze_batch_size) + 1
+            print("\n\033[1;33;44m[Warning] 使用%s优化器时，建议将训练总步长设置到%d以上。\033[0m"%(optimizer_type, wanted_step))
+            print("\033[1;33;44m[Warning] 本次运行的总训练数据量为%d，Unfreeze_batch_size为%d，共训练%d个Epoch，计算出总训练步长为%d。\033[0m"%(num_train, Unfreeze_batch_size, UnFreeze_Epoch, total_step))
+            print("\033[1;33;44m[Warning] 由于总训练步长为%d，小于建议总步长%d，建议设置总世代为%d。\033[0m"%(total_step, wanted_step, wanted_epoch))
+        
+    UnFreeze_flag = False
     if Freeze_Train:
-        for i in range(freeze_layers): model.layers[i].trainable = False
-        print('Freeze the first {} layers of total {} layers.'.format(freeze_layers, len(model.layers)))
+        for param in model.backbone.parameters():
+            param.requires_grad = False
 
-    batch_size  = Freeze_batch_size
-    lr = Freeze_lr
-    start_epoch = Init_Epoch
-    end_epoch   = Freeze_Epoch
+    batch_size = Freeze_batch_size if Freeze_Train else Unfreeze_batch_size
+    nbs = 16
+    lr_limit_max    = 5e-4 if optimizer_type == 'adam' else 1e-1
+    lr_limit_min    = 3e-4 if optimizer_type == 'adam' else 5e-4
+    if backbone == "xception":
+        lr_limit_max    = 1e-4 if optimizer_type == 'adam' else 1e-1
+        lr_limit_min    = 1e-4 if optimizer_type == 'adam' else 5e-4
+    Init_lr_fit     = min(max(batch_size / nbs * Init_lr, lr_limit_min), lr_limit_max)
+    Min_lr_fit      = min(max(batch_size / nbs * Min_lr, lr_limit_min * 1e-2), lr_limit_max * 1e-2)
 
-    train_dataloader = DeeplabDataset(train_lines, input_shape, batch_size, num_classes, True, dataset_path, 'JPEGImage', 'Label')
-    val_dataloader      = DeeplabDataset(val_lines, input_shape, batch_size, num_classes, False, dataset_path, 'JPEGImage', 'Label')
+    optimizer = {
+        'adam'  : optim.Adam(model.parameters(), Init_lr_fit, betas = (momentum, 0.999), weight_decay = weight_decay),
+        'sgd'   : optim.SGD(model.parameters(), Init_lr_fit, momentum = momentum, nesterov=True, weight_decay = weight_decay)
+    }[optimizer_type]
 
-    epoch_step      = len(train_lines) // batch_size
-    epoch_step_val  = len(val_lines) // batch_size
+    lr_scheduler_func = get_lr_scheduler(lr_decay_type, Init_lr_fit, Min_lr_fit, UnFreeze_Epoch)
+        
+    epoch_step      = num_train // batch_size
+    epoch_step_val  = num_val // batch_size
         
     if epoch_step == 0 or epoch_step_val == 0:
-        raise ValueError("数据集过小，无法进行训练，请扩充数据集。")
+        raise ValueError("数据集过小，无法继续进行训练，请扩充数据集。")
 
-    print('Train on {} samples, val on {} samples, with batch size {}.'.format(len(train_lines), len(val_lines), batch_size))
-    if eager:
-        gen     = tf.data.Dataset.from_generator(partial(train_dataloader()), (tf.float32, tf.float32))
-        gen_val = tf.data.Dataset.from_generator(partial(val_dataloader()), (tf.float32, tf.float32))
-        gen     = gen.shuffle(buffer_size = batch_size).prefetch(buffer_size = batch_size)
-        gen_val = gen_val.shuffle(buffer_size = batch_size).prefetch(buffer_size = batch_size)
-        lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(initial_learning_rate = lr, decay_steps = epoch_step, decay_rate=0.92, staircase=True)    
-        optimizer = tf.keras.optimizers.Adam(learning_rate = lr_schedule)
+    train_dataset   = DeeplabDataset(train_lines, input_shape, num_classes, True, VOCdevkit_path)
+    val_dataset     = DeeplabDataset(val_lines, input_shape, num_classes, False, VOCdevkit_path)
 
-        for epoch in range(start_epoch, end_epoch):
-            fit_one_epoch(model, loss, optimizer, epoch, epoch_step, epoch_step_val, gen, gen_val, 
-                            end_epoch, f_score())
-
+    if distributed:
+        train_sampler   = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True,)
+        val_sampler     = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False,)
+        batch_size      = batch_size // ngpus_per_node
+        shuffle         = False
     else:
-        model.compile(loss = loss,optimizer = Adam(lr=lr),metrics = [f_score()])
-        model.fit_generator(
-            generator           = train_dataloader,
-            steps_per_epoch     = epoch_step,
-            validation_data     = val_dataloader,
-            validation_steps    = epoch_step_val,
-            epochs              = end_epoch,
-            initial_epoch       = start_epoch,
-            callbacks           = [logging, checkpoint, reduce_lr, early_stopping]
-        )
+        train_sampler   = None
+        val_sampler     = None
+        shuffle         = True
 
-    if Freeze_Train:
-        for i in range(freeze_layers): model.layers[i].trainable = True
+    gen = DataLoader(train_dataset, shuffle = shuffle, batch_size = batch_size, num_workers = num_workers, pin_memory=True,
+                                    drop_last = True, collate_fn = deeplab_dataset_collate, sampler=train_sampler)
+    gen_val = DataLoader(val_dataset  , shuffle = shuffle, batch_size = batch_size, num_workers = num_workers, pin_memory=True, 
+                                    drop_last = True, collate_fn = deeplab_dataset_collate, sampler=val_sampler)
 
-        batch_size  = Unfreeze_batch_size
-        lr          = Unfreeze_lr
-        start_epoch = Freeze_Epoch
-        end_epoch   = UnFreeze_Epoch
-
-        train_dataloader = DeeplabDataset(train_lines, input_shape, batch_size, num_classes, True, dataset_path, 'JPEGImage', 'Label')
-        val_dataloader  = DeeplabDataset(val_lines, input_shape, batch_size, num_classes, False, dataset_path, 'JPEGImage', 'Label')
-
-        epoch_step      = len(train_lines) // batch_size
-        epoch_step_val  = len(val_lines) // batch_size
+    if local_rank == 0:
+        eval_callback   = EvalCallback(model, input_shape, num_classes, val_lines, VOCdevkit_path, log_dir, Cuda, \
+                                            eval_flag=eval_flag, period=eval_period)
+    else:
+        eval_callback   = None
         
-        if epoch_step == 0 or epoch_step_val == 0:
-            raise ValueError("数据集过小，无法进行训练，请扩充数据集。")
+    for epoch in range(Init_Epoch, UnFreeze_Epoch):
+        if epoch >= Freeze_Epoch and not UnFreeze_flag and Freeze_Train:
+            batch_size = Unfreeze_batch_size
 
-        print('Train on {} samples, val on {} samples, with batch size {}.'.format(len(train_lines), len(val_lines), batch_size))
-        if eager:
-            gen     = tf.data.Dataset.from_generator(partial(train_dataloader.generate), (tf.float32, tf.float32))
-            gen_val = tf.data.Dataset.from_generator(partial(val_dataloader.generate), (tf.float32, tf.float32))
+            nbs = 16
+            lr_limit_max    = 5e-4 if optimizer_type == 'adam' else 1e-1
+            lr_limit_min    = 3e-4 if optimizer_type == 'adam' else 5e-4
+            if backbone == "xception":
+                lr_limit_max    = 1e-4 if optimizer_type == 'adam' else 1e-1
+                lr_limit_min    = 1e-4 if optimizer_type == 'adam' else 5e-4
+            Init_lr_fit     = min(max(batch_size / nbs * Init_lr, lr_limit_min), lr_limit_max)
+            Min_lr_fit      = min(max(batch_size / nbs * Min_lr, lr_limit_min * 1e-2), lr_limit_max * 1e-2)
+            lr_scheduler_func = get_lr_scheduler(lr_decay_type, Init_lr_fit, Min_lr_fit, UnFreeze_Epoch)
+                    
+            for param in model.backbone.parameters():
+                param.requires_grad = True
+                            
+            epoch_step      = num_train // batch_size
+            epoch_step_val  = num_val // batch_size
 
-            gen     = gen.shuffle(buffer_size = batch_size).prefetch(buffer_size = batch_size)
-            gen_val = gen_val.shuffle(buffer_size = batch_size).prefetch(buffer_size = batch_size)
+            if epoch_step == 0 or epoch_step_val == 0:
+                raise ValueError("数据集过小，无法继续进行训练，请扩充数据集。")
 
-            lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
-                initial_learning_rate = lr, decay_steps = epoch_step, decay_rate=0.92, staircase=True)
-            
-            optimizer = tf.keras.optimizers.Adam(learning_rate = lr_schedule)
+            if distributed:
+                batch_size = batch_size // ngpus_per_node
 
-            for epoch in range(start_epoch, end_epoch):
-                fit_one_epoch(model, loss, optimizer, epoch, epoch_step, epoch_step_val, gen, gen_val, 
-                            end_epoch, f_score())
+            gen = DataLoader(train_dataset, shuffle = shuffle, batch_size = batch_size, num_workers = num_workers, pin_memory=True,
+                                            drop_last = True, collate_fn = deeplab_dataset_collate, sampler=train_sampler)
+            gen_val = DataLoader(val_dataset  , shuffle = shuffle, batch_size = batch_size, num_workers = num_workers, pin_memory=True, 
+                                            drop_last = True, collate_fn = deeplab_dataset_collate, sampler=val_sampler)
 
-        else:
-            model.compile(loss = loss,
-                    optimizer = Adam(lr=lr),
-                    metrics = [f_score()])
+            UnFreeze_flag = True
 
-            model.fit_generator(
-                generator           = train_dataloader,
-                steps_per_epoch     = epoch_step,
-                validation_data     = val_dataloader,
-                validation_steps    = epoch_step_val,
-                epochs              = end_epoch,
-                initial_epoch       = start_epoch,
-                callbacks           = [logging, checkpoint, reduce_lr, early_stopping]
-            )
+        if distributed:
+            train_sampler.set_epoch(epoch)
+
+        set_optimizer_lr(optimizer, lr_scheduler_func, epoch)
+
+        fit_one_epoch(model_train, model, loss_history, eval_callback, optimizer, epoch, 
+                    epoch_step, epoch_step_val, gen, gen_val, UnFreeze_Epoch, Cuda, dice_loss, focal_loss, cls_weights, num_classes, fp16, scaler, save_period, save_dir, local_rank)
+
+        if distributed:
+            dist.barrier()
+
+    if local_rank == 0:
+        loss_history.writer.close()

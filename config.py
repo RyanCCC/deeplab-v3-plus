@@ -1,10 +1,12 @@
-from pickle import TRUE
-
-
 num_classes = 19
+cuda = False
+distributed = False
+sync_bn = False
 backbone    = "xception"
-model_path  = "model/deeplabv3tf2_xception.h5"
+pretrained = False
+model_path  = "model/deeplabv3tf2_xception.pth"
 dataset_path = './Cityscapes'
+class_path = './data/VOCdevkit.names'
 
 LABEL_COLORS = [(128, 64, 128), (231, 35, 244), (69, 69, 69)
                 # 0 = road, 1 = sidewalk, 2 = building
@@ -26,12 +28,12 @@ input_shape = [512, 512]
 START_EPOCH = 0
 Freeze_Epoch = 100
 FREEZE_BATCHSIZE = 8
-FREEZE_LEARNING_RATE = 5e-4
+LEARNING_RATE = 5e-4
 UNFREEZE_EPOCH = 200
 UNFREEZE_BATCHSIZE = 4
-UNFREEZE_LEARNING_RATE = 5e-5
 FREEZE_TRAIN = True
 DICE_LOSS = False
-MODEL_WEIGHTS = './model/model_1.h5'
-checkpoint = './road.h5'
+MODEL_WEIGHTS = './model/model_1.pth'
+checkpoint = './road.pth'
 logdir =  './logs'
+save_period = 10

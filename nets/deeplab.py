@@ -1,105 +1,144 @@
-from __future__ import absolute_import, division, print_function
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from .Xception import xception
+from .mobilenet import mobilenetv2
 
-import tensorflow as tf
-from tensorflow.keras import backend as K
-from tensorflow.keras.layers import (Activation, BatchNormalization,
-                                     Concatenate, Conv2D, DepthwiseConv2D,
-                                     Dropout, GlobalAveragePooling2D, Input,
-                                     Lambda, Softmax, ZeroPadding2D)
-from tensorflow.keras.models import Model
+class MobileNetV2(nn.Module):
+    def __init__(self, downsample_factor=8, pretrained=True):
+        super(MobileNetV2, self).__init__()
+        from functools import partial
+        
+        model           = mobilenetv2(pretrained)
+        self.features   = model.features[:-1]
 
-from nets.mobilenet import mobilenetV2
-from nets.Xception import Xception
+        self.total_idx  = len(self.features)
+        self.down_idx   = [2, 4, 7, 14]
+
+        if downsample_factor == 8:
+            for i in range(self.down_idx[-2], self.down_idx[-1]):
+                self.features[i].apply(
+                    partial(self._nostride_dilate, dilate=2)
+                )
+            for i in range(self.down_idx[-1], self.total_idx):
+                self.features[i].apply(
+                    partial(self._nostride_dilate, dilate=4)
+                )
+        elif downsample_factor == 16:
+            for i in range(self.down_idx[-1], self.total_idx):
+                self.features[i].apply(
+                    partial(self._nostride_dilate, dilate=2)
+                )
+        
+    def _nostride_dilate(self, m, dilate):
+        classname = m.__class__.__name__
+        if classname.find('Conv') != -1:
+            if m.stride == (2, 2):
+                m.stride = (1, 1)
+                if m.kernel_size == (3, 3):
+                    m.dilation = (dilate//2, dilate//2)
+                    m.padding = (dilate//2, dilate//2)
+            else:
+                if m.kernel_size == (3, 3):
+                    m.dilation = (dilate, dilate)
+                    m.padding = (dilate, dilate)
+
+    def forward(self, x):
+        low_level_features = self.features[:4](x)
+        x = self.features[4:](low_level_features)
+        return low_level_features, x 
 
 
-def SepConv_BN(x, filters, prefix, stride=1, kernel_size=3, rate=1, depth_activation=False, epsilon=1e-3):
-    # 计算padding的数量，hw是否需要收缩
-    if stride == 1:
-        depth_padding = 'same'
-    else:
-        kernel_size_effective = kernel_size + (kernel_size - 1) * (rate - 1)
-        pad_total = kernel_size_effective - 1
-        pad_beg = pad_total // 2
-        pad_end = pad_total - pad_beg
-        x = ZeroPadding2D((pad_beg, pad_end))(x)
-        depth_padding = 'valid'
-    if not depth_activation:
-        x = Activation('relu')(x)
+class ASPP(nn.Module):
+	def __init__(self, dim_in, dim_out, rate=1, bn_mom=0.1):
+		super(ASPP, self).__init__()
+		self.branch1 = nn.Sequential(
+				nn.Conv2d(dim_in, dim_out, 1, 1, padding=0, dilation=rate,bias=True),
+				nn.BatchNorm2d(dim_out, momentum=bn_mom),
+				nn.ReLU(inplace=True),
+		)
+		self.branch2 = nn.Sequential(
+				nn.Conv2d(dim_in, dim_out, 3, 1, padding=6*rate, dilation=6*rate, bias=True),
+				nn.BatchNorm2d(dim_out, momentum=bn_mom),
+				nn.ReLU(inplace=True),	
+		)
+		self.branch3 = nn.Sequential(
+				nn.Conv2d(dim_in, dim_out, 3, 1, padding=12*rate, dilation=12*rate, bias=True),
+				nn.BatchNorm2d(dim_out, momentum=bn_mom),
+				nn.ReLU(inplace=True),	
+		)
+		self.branch4 = nn.Sequential(
+				nn.Conv2d(dim_in, dim_out, 3, 1, padding=18*rate, dilation=18*rate, bias=True),
+				nn.BatchNorm2d(dim_out, momentum=bn_mom),
+				nn.ReLU(inplace=True),	
+		)
+		self.branch5_conv = nn.Conv2d(dim_in, dim_out, 1, 1, 0,bias=True)
+		self.branch5_bn = nn.BatchNorm2d(dim_out, momentum=bn_mom)
+		self.branch5_relu = nn.ReLU(inplace=True)
 
-    # 分离卷积，首先3x3分离卷积，再1x1卷积
-    # 3x3采用膨胀卷积
-    x = DepthwiseConv2D((kernel_size, kernel_size), strides=(stride, stride), dilation_rate=(rate, rate),
-                        padding=depth_padding, use_bias=False, name=prefix + '_depthwise')(x)
-    x = BatchNormalization(name=prefix + '_depthwise_BN', epsilon=epsilon)(x)
-    if depth_activation:
-        x = Activation('relu')(x)
+		self.conv_cat = nn.Sequential(
+				nn.Conv2d(dim_out*5, dim_out, 1, 1, padding=0,bias=True),
+				nn.BatchNorm2d(dim_out, momentum=bn_mom),
+				nn.ReLU(inplace=True),		
+		)
 
-    # 1x1卷积，进行压缩
-    x = Conv2D(filters, (1, 1), padding='same',
-               use_bias=False, name=prefix + '_pointwise')(x)
-    x = BatchNormalization(name=prefix + '_pointwise_BN', epsilon=epsilon)(x)
-    if depth_activation:
-        x = Activation('relu')(x)
+	def forward(self, x):
+		[b, c, row, col] = x.size()
+		conv1x1 = self.branch1(x)
+		conv3x3_1 = self.branch2(x)
+		conv3x3_2 = self.branch3(x)
+		conv3x3_3 = self.branch4(x)
+		global_feature = torch.mean(x,2,True)
+		global_feature = torch.mean(global_feature,3,True)
+		global_feature = self.branch5_conv(global_feature)
+		global_feature = self.branch5_bn(global_feature)
+		global_feature = self.branch5_relu(global_feature)
+		global_feature = F.interpolate(global_feature, (row, col), None, 'bilinear', True)
+		feature_cat = torch.cat([conv1x1, conv3x3_1, conv3x3_2, conv3x3_3, global_feature], dim=1)
+		result = self.conv_cat(feature_cat)
+		return result
 
-    return x
+class DeepLab(nn.Module):
+    def __init__(self, num_classes, backbone="mobilenet", pretrained=True, downsample_factor=16):
+        super(DeepLab, self).__init__()
+        if backbone=="xception":
+            self.backbone = xception(downsample_factor=downsample_factor, pretrained=pretrained)
+            in_channels = 2048
+            low_level_channels = 256
+        elif backbone=="mobilenet":
+            self.backbone = MobileNetV2(downsample_factor=downsample_factor, pretrained=pretrained)
+            in_channels = 320
+            low_level_channels = 24
+        else:
+            raise ValueError('Unsupported backbone - `{}`, Use mobilenet, xception.'.format(backbone))
+        self.aspp = ASPP(dim_in=in_channels, dim_out=256, rate=16//downsample_factor)
+        self.shortcut_conv = nn.Sequential(
+            nn.Conv2d(low_level_channels, 48, 1),
+            nn.BatchNorm2d(48),
+            nn.ReLU(inplace=True)
+        )		
 
-def Deeplabv3(input_shape, num_classes, alpha=1., backbone="mobilenet", downsample_factor=16):
-    img_input = Input(shape=input_shape)
+        self.cat_conv = nn.Sequential(
+            nn.Conv2d(48+256, 256, 3, stride=1, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.Dropout(0.5),
 
-    if backbone=="xception":
-        x, atrous_rates, skip1 = Xception(img_input, alpha, downsample_factor=downsample_factor)
-    elif backbone=="mobilenet":
-        x, atrous_rates, skip1 = mobilenetV2(img_input, alpha, downsample_factor=downsample_factor)
-    else:
-        raise ValueError('Unsupported backbone - `{}`, Use mobilenet, xception.'.format(backbone))
+            nn.Conv2d(256, 256, 3, stride=1, padding=1),
+            nn.BatchNorm2d(256),
+            nn.ReLU(inplace=True),
 
-    size_before = tf.keras.backend.int_shape(x)
-    # 分支0
-    b0 = Conv2D(256, (1, 1), padding='same', use_bias=False, name='aspp0')(x)
-    b0 = BatchNormalization(name='aspp0_BN', epsilon=1e-5)(b0)
-    b0 = Activation('relu', name='aspp0_activation')(b0)
+            nn.Dropout(0.1),
+        )
+        self.cls_conv = nn.Conv2d(256, num_classes, 1, stride=1)
 
-    # 分支1 rate = 6 (12)
-    b1 = SepConv_BN(x, 256, 'aspp1',
-                    rate=atrous_rates[0], depth_activation=True, epsilon=1e-5)
-    # 分支2 rate = 12 (24)
-    b2 = SepConv_BN(x, 256, 'aspp2',
-                    rate=atrous_rates[1], depth_activation=True, epsilon=1e-5)
-    # 分支3 rate = 18 (36)
-    b3 = SepConv_BN(x, 256, 'aspp3',
-                    rate=atrous_rates[2], depth_activation=True, epsilon=1e-5)
-                    
-    # 分支4 平均池化
-    b4 = GlobalAveragePooling2D()(x)
-    b4 = Lambda(lambda x: K.expand_dims(x, 1))(b4)
-    b4 = Lambda(lambda x: K.expand_dims(x, 1))(b4)
-    b4 = Conv2D(256, (1, 1), padding='same', use_bias=False, name='image_pooling')(b4)
-    b4 = BatchNormalization(name='image_pooling_BN', epsilon=1e-5)(b4)
-    b4 = Activation('relu')(b4)
-    b4 = Lambda(lambda x: tf.compat.v1.image.resize_images(x, size_before[1:3], align_corners=True))(b4)
-    x = Concatenate()([b4, b0, b1, b2, b3])
-    # 利用conv2d压缩 32,32,256
-    x = Conv2D(256, (1, 1), padding='same', use_bias=False, name='concat_projection')(x)
-    x = BatchNormalization(name='concat_projection_BN', epsilon=1e-5)(x)
-    x = Activation('relu')(x)
-    x = Dropout(0.1)(x)
-
-    skip_size = tf.keras.backend.int_shape(skip1)
-    x = Lambda(lambda xx: tf.compat.v1.image.resize_images(xx, skip_size[1:3], align_corners=True))(x)
-    dec_skip1 = Conv2D(48, (1, 1), padding='same',use_bias=False, name='feature_projection0')(skip1)
-    dec_skip1 = BatchNormalization(name='feature_projection0_BN', epsilon=1e-5)(dec_skip1)
-    dec_skip1 = Activation(tf.nn.relu)(dec_skip1)
-    x = Concatenate()([x, dec_skip1])
-    x = SepConv_BN(x, 256, 'decoder_conv0',
-                    depth_activation=True, epsilon=1e-5)
-    x = SepConv_BN(x, 256, 'decoder_conv1',
-                    depth_activation=True, epsilon=1e-5)
-    # 512,512
-    size_before3 = tf.keras.backend.int_shape(img_input)
-    # 512,512,21
-    x = Conv2D(num_classes, (1, 1), padding='same')(x)
-    x = Lambda(lambda xx:tf.compat.v1.image.resize_images(xx,size_before3[1:3], align_corners=True))(x)
-    x = Softmax()(x)
-
-    model = Model(img_input, x, name='deeplabv3plus')
-    return model
+    def forward(self, x):
+        H, W = x.size(2), x.size(3)
+        low_level_features, x = self.backbone(x)
+        x = self.aspp(x)
+        low_level_features = self.shortcut_conv(low_level_features)
+        x = F.interpolate(x, size=(low_level_features.size(2), low_level_features.size(3)), mode='bilinear', align_corners=True)
+        x = self.cat_conv(torch.cat((x, low_level_features), dim=1))
+        x = self.cls_conv(x)
+        x = F.interpolate(x, size=(H, W), mode='bilinear', align_corners=True)
+        return x

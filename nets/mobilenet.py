@@ -1,132 +1,142 @@
-from tensorflow.keras.activations import relu
-from tensorflow.keras.layers import (Activation, Add, BatchNormalization,
-                                     Conv2D, DepthwiseConv2D)
+import math
+import os
+
+import torch
+import torch.nn as nn
+import torch.utils.model_zoo as model_zoo
+
+BatchNorm2d = nn.BatchNorm2d
+
+def conv_bn(inp, oup, stride):
+    return nn.Sequential(
+        nn.Conv2d(inp, oup, 3, stride, 1, bias=False),
+        BatchNorm2d(oup),
+        nn.ReLU6(inplace=True)
+    )
+
+def conv_1x1_bn(inp, oup):
+    return nn.Sequential(
+        nn.Conv2d(inp, oup, 1, 1, 0, bias=False),
+        BatchNorm2d(oup),
+        nn.ReLU6(inplace=True)
+    )
+
+class InvertedResidual(nn.Module):
+    def __init__(self, inp, oup, stride, expand_ratio):
+        super(InvertedResidual, self).__init__()
+        self.stride = stride
+        assert stride in [1, 2]
+
+        hidden_dim = round(inp * expand_ratio)
+        self.use_res_connect = self.stride == 1 and inp == oup
+
+        if expand_ratio == 1:
+            self.conv = nn.Sequential(
+                nn.Conv2d(hidden_dim, hidden_dim, 3, stride, 1, groups=hidden_dim, bias=False),
+                BatchNorm2d(hidden_dim),
+                nn.ReLU6(inplace=True),
+                nn.Conv2d(hidden_dim, oup, 1, 1, 0, bias=False),
+                BatchNorm2d(oup),
+            )
+        else:
+            self.conv = nn.Sequential(
+                nn.Conv2d(inp, hidden_dim, 1, 1, 0, bias=False),
+                BatchNorm2d(hidden_dim),
+                nn.ReLU6(inplace=True),
+                nn.Conv2d(hidden_dim, hidden_dim, 3, stride, 1, groups=hidden_dim, bias=False),
+                BatchNorm2d(hidden_dim),
+                nn.ReLU6(inplace=True),
+                nn.Conv2d(hidden_dim, oup, 1, 1, 0, bias=False),
+                BatchNorm2d(oup),
+            )
+
+    def forward(self, x):
+        if self.use_res_connect:
+            return x + self.conv(x)
+        else:
+            return self.conv(x)
+
+class MobileNetV2(nn.Module):
+    def __init__(self, n_class=1000, input_size=224, width_mult=1.):
+        super(MobileNetV2, self).__init__()
+        block = InvertedResidual
+        input_channel = 32
+        last_channel = 1280
+        interverted_residual_setting = [
+            # t, c, n, s
+            [1, 16, 1, 1], # 256, 256, 32 -> 256, 256, 16
+            [6, 24, 2, 2], # 256, 256, 16 -> 128, 128, 24   2
+            [6, 32, 3, 2], # 128, 128, 24 -> 64, 64, 32     4
+            [6, 64, 4, 2], # 64, 64, 32 -> 32, 32, 64       7
+            [6, 96, 3, 1], # 32, 32, 64 -> 32, 32, 96
+            [6, 160, 3, 2], # 32, 32, 96 -> 16, 16, 160     14
+            [6, 320, 1, 1], # 16, 16, 160 -> 16, 16, 320
+        ]
+
+        assert input_size % 32 == 0
+        input_channel = int(input_channel * width_mult)
+        self.last_channel = int(last_channel * width_mult) if width_mult > 1.0 else last_channel
+        # 512, 512, 3 -> 256, 256, 32
+        self.features = [conv_bn(3, input_channel, 2)]
+
+        for t, c, n, s in interverted_residual_setting:
+            output_channel = int(c * width_mult)
+            for i in range(n):
+                if i == 0:
+                    self.features.append(block(input_channel, output_channel, s, expand_ratio=t))
+                else:
+                    self.features.append(block(input_channel, output_channel, 1, expand_ratio=t))
+                input_channel = output_channel
+
+        self.features.append(conv_1x1_bn(input_channel, self.last_channel))
+        self.features = nn.Sequential(*self.features)
+
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.2),
+            nn.Linear(self.last_channel, n_class),
+        )
+
+        self._initialize_weights()
+
+    def forward(self, x):
+        x = self.features(x)
+        x = x.mean(3).mean(2)
+        x = self.classifier(x)
+        return x
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+                if m.bias is not None:
+                    m.bias.data.zero_()
+            elif isinstance(m, BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+            elif isinstance(m, nn.Linear):
+                n = m.weight.size(1)
+                m.weight.data.normal_(0, 0.01)
+                m.bias.data.zero_()
 
 
-def _make_divisible(v, divisor, min_value=None):
-    if min_value is None:
-        min_value = divisor
-    new_v = max(min_value, int(v + divisor / 2) // divisor * divisor)
-    if new_v < 0.9 * v:
-        new_v += divisor
-    return new_v
-
-def relu6(x):
-    return relu(x, max_value=6)
-
-def _inverted_res_block(inputs, expansion, stride, alpha, in_filters, filters, block_id, skip_connection, rate=1):
-    pointwise_filters = _make_divisible(int(filters * alpha), 8)
-    prefix = 'expanded_conv_{}_'.format(block_id)
-
-    x = inputs
-    if block_id:
-        x = Conv2D(expansion * in_filters, kernel_size=1, padding='same',
-                   use_bias=False, activation=None,
-                   name=prefix + 'expand')(x)
-        x = BatchNormalization(epsilon=1e-3, momentum=0.999,
-                               name=prefix + 'expand_BN')(x)
-        x = Activation(relu6, name=prefix + 'expand_relu')(x)
+def load_url(url, model_dir='./model', map_location=None):
+    if not os.path.exists(model_dir):
+        os.makedirs(model_dir)
+    filename = url.split('/')[-1]
+    cached_file = os.path.join(model_dir, filename)
+    if os.path.exists(cached_file):
+        return torch.load(cached_file, map_location=map_location)
     else:
-        prefix = 'expanded_conv_'
+        return model_zoo.load_url(url,model_dir=model_dir)
 
-    #----------------------------------------------------#
-    #   利用深度可分离卷积进行特征提取
-    #----------------------------------------------------#
-    x = DepthwiseConv2D(kernel_size=3, strides=stride, activation=None,
-                        use_bias=False, padding='same', dilation_rate=(rate, rate),
-                        name=prefix + 'depthwise')(x)
-    x = BatchNormalization(epsilon=1e-3, momentum=0.999,
-                           name=prefix + 'depthwise_BN')(x)
+def mobilenetv2(pretrained=False, **kwargs):
+    model = MobileNetV2(n_class=1000, **kwargs)
+    if pretrained:
+        model.load_state_dict(load_url('https://github.com/bubbliiiing/deeplabv3-plus-pytorch/releases/download/v1.0/mobilenet_v2.pth.tar'), strict=False)
+    return model
 
-    x = Activation(relu6, name=prefix + 'depthwise_relu')(x)
-
-    #----------------------------------------------------#
-    #   利用1x1的卷积进行通道数的下降
-    #----------------------------------------------------#
-    x = Conv2D(pointwise_filters,
-               kernel_size=1, padding='same', use_bias=False, activation=None,
-               name=prefix + 'project')(x)
-    x = BatchNormalization(epsilon=1e-3, momentum=0.999,
-                           name=prefix + 'project_BN')(x)
-
-    #----------------------------------------------------#
-    #   添加残差边
-    #----------------------------------------------------#
-    if skip_connection:
-        return Add(name=prefix + 'add')([inputs, x])
-    return x
-
-def mobilenetV2(inputs, alpha=1, downsample_factor=8):
-    if downsample_factor == 8:
-        block4_dilation = 2
-        block5_dilation = 4
-        block4_stride = 1
-        atrous_rates = (12, 24, 36)
-    elif downsample_factor == 16:
-        block4_dilation = 1
-        block5_dilation = 2
-        block4_stride = 2
-        atrous_rates = (6, 12, 18)
-    else:
-        raise ValueError('Unsupported factor - `{}`, Use 8 or 16.'.format(downsample_factor))
-    
-    first_block_filters = _make_divisible(32 * alpha, 8)
-    # 512,512,3 -> 256,256,32
-    x = Conv2D(first_block_filters,
-                kernel_size=3,
-                strides=(2, 2), padding='same',
-                use_bias=False, name='Conv')(inputs)
-    x = BatchNormalization(
-        epsilon=1e-3, momentum=0.999, name='Conv_BN')(x)
-    x = Activation(relu6, name='Conv_Relu6')(x)
-
-    
-    x = _inverted_res_block(x, in_filters=32, filters=16, alpha=alpha, stride=1,
-                            expansion=1, block_id=0, skip_connection=False)
-
-    #---------------------------------------------------------------#
-    # 256,256,16 -> 128,128,24
-    x = _inverted_res_block(x, in_filters=16, filters=24, alpha=alpha, stride=2,
-                            expansion=6, block_id=1, skip_connection=False)
-    x = _inverted_res_block(x, in_filters=24, filters=24, alpha=alpha, stride=1,
-                            expansion=6, block_id=2, skip_connection=True)
-    skip1 = x
-    #---------------------------------------------------------------#
-    # 128,128,24 -> 64,64.32
-    x = _inverted_res_block(x, in_filters=24, filters=32, alpha=alpha, stride=2,
-                            expansion=6, block_id=3, skip_connection=False)
-    x = _inverted_res_block(x, in_filters=32, filters=32, alpha=alpha, stride=1,
-                            expansion=6, block_id=4, skip_connection=True)
-    x = _inverted_res_block(x, in_filters=32, filters=32, alpha=alpha, stride=1,
-                            expansion=6, block_id=5, skip_connection=True)
-    #---------------------------------------------------------------#
-    # 64,64,32 -> 32,32.64
-    x = _inverted_res_block(x, in_filters=32, filters=64, alpha=alpha, stride=block4_stride,
-                            expansion=6, block_id=6, skip_connection=False)
-    x = _inverted_res_block(x, in_filters=64, filters=64, alpha=alpha, stride=1, rate=block4_dilation,
-                            expansion=6, block_id=7, skip_connection=True)
-    x = _inverted_res_block(x, in_filters=64, filters=64, alpha=alpha, stride=1, rate=block4_dilation,
-                            expansion=6, block_id=8, skip_connection=True)
-    x = _inverted_res_block(x, in_filters=64, filters=64, alpha=alpha, stride=1, rate=block4_dilation,
-                            expansion=6, block_id=9, skip_connection=True)
-
-    # 32,32.64 -> 32,32.96
-    x = _inverted_res_block(x, in_filters=64, filters=96, alpha=alpha, stride=1, rate=block4_dilation,
-                            expansion=6, block_id=10, skip_connection=False)
-    x = _inverted_res_block(x, in_filters=96, filters=96, alpha=alpha, stride=1, rate=block4_dilation,
-                            expansion=6, block_id=11, skip_connection=True)
-    x = _inverted_res_block(x, in_filters=96, filters=96, alpha=alpha, stride=1, rate=block4_dilation,
-                            expansion=6, block_id=12, skip_connection=True)
-
-    #---------------------------------------------------------------#
-    # 32,32.96 -> 32,32,160 -> 32,32,320
-    x = _inverted_res_block(x, in_filters=96, filters=160, alpha=alpha, stride=1, rate=block4_dilation,  # 1!
-                            expansion=6, block_id=13, skip_connection=False)
-    x = _inverted_res_block(x, in_filters=160, filters=160, alpha=alpha, stride=1, rate=block5_dilation,
-                            expansion=6, block_id=14, skip_connection=True)
-    x = _inverted_res_block(x, in_filters=160, filters=160, alpha=alpha, stride=1, rate=block5_dilation,
-                            expansion=6, block_id=15, skip_connection=True)
-
-    x = _inverted_res_block(x, in_filters=160, filters=320, alpha=alpha, stride=1, rate=block5_dilation,
-                            expansion=6, block_id=16, skip_connection=False)
-    return x,atrous_rates,skip1
+if __name__ == "__main__":
+    model = mobilenetv2()
+    for i, layer in enumerate(model.features):
+        print(i, layer)
