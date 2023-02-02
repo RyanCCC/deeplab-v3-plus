@@ -194,5 +194,5 @@ def load_url(url, model_dir='./model_data', map_location=None):
 def xception(pretrained=True, downsample_factor=16):
     model = Xception(downsample_factor=downsample_factor)
     if pretrained:
-        model.load_state_dict(load_url('https://github.com/bubbliiiing/deeplabv3-plus-pytorch/releases/download/v1.0/xception_pytorch_imagenet.pth'), strict=False)
+        model.load_state_dict(load_url('https://github.com/RyanCCC/deeplab-v3-plus/releases/download/v1.0/xception_pytorch_imagenet.pth'), strict=False)
     return model

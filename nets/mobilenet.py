@@ -133,7 +133,7 @@ def load_url(url, model_dir='./model', map_location=None):
 def mobilenetv2(pretrained=False, **kwargs):
     model = MobileNetV2(n_class=1000, **kwargs)
     if pretrained:
-        model.load_state_dict(load_url('https://github.com/bubbliiiing/deeplabv3-plus-pytorch/releases/download/v1.0/mobilenet_v2.pth.tar'), strict=False)
+        model.load_state_dict(load_url('https://github.com/RyanCCC/deeplab-v3-plus/releases/download/v1.0/mobilenet_v2.pth'), strict=False)
     return model
 
 if __name__ == "__main__":
