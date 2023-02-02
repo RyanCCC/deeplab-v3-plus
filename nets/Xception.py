@@ -75,8 +75,7 @@ class Block(nn.Module):
 
 class Xception(nn.Module):
     """
-    Xception optimized for the ImageNet dataset, as specified in
-    https://arxiv.org/pdf/1610.02357.pdf
+    Xception optimized for the ImageNet dataset, as specified in https://arxiv.org/pdf/1610.02357.pdf
     """
     def __init__(self, downsample_factor):
         """ Constructor
@@ -133,7 +132,6 @@ class Xception(nn.Module):
         self.conv5 = SeparableConv2d(1536,2048,3,1,1*rate,dilation=rate,activate_first=False)
         self.layers = []
 
-        #------- init weights --------
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
@@ -141,7 +139,6 @@ class Xception(nn.Module):
             elif isinstance(m, nn.BatchNorm2d):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
-        #-----------------------------
 
     def forward(self, input):
         self.layers = []
