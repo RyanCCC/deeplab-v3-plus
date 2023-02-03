@@ -13,20 +13,20 @@ from .deeplab import DeepLab
 from utils.tools import cvtColor, preprocess_input, resize_image, show_config
 
 class DeeplabV3(object):
-    _defaults = {
-        "model_path" : 'model_data/deeplab_mobilenetv2.pth',
-        "num_classes"       : 21,
-        "backbone"          : "mobilenet",
-        "input_shape"       : [512, 512],
-        "downsample_factor" : 16,
-        "mix_type"          : 0,
-        "cuda"              : True,
-    }
-
     def __init__(self, **kwargs):
         self.__dict__.update(self._defaults)
         for name, value in kwargs.items():
             setattr(self, name, value)
+        
+        self.model_path = kwargs['model_path']
+        self.num_classes = kwargs['num_classes']
+        self.backbone = kwargs['backbone']
+        self.input_shape = kwargs['input_shape']
+        self.downsample_factor = kwargs['downsample_factor']
+        self.mix_type = 0
+        self.cuda  = kwargs['cuda']
+
+
         if self.num_classes <= 21:
             self.colors = [ (0, 0, 0), (128, 0, 0), (0, 128, 0), (128, 128, 0), (0, 0, 128), (128, 0, 128), (0, 128, 128), 
                             (128, 128, 128), (64, 0, 0), (192, 0, 0), (64, 128, 0), (192, 128, 0), (64, 0, 128), (192, 0, 128), 

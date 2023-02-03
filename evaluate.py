@@ -23,7 +23,14 @@ if __name__ == "__main__":
             os.makedirs(pred_dir)
             
         print("Load model.")
-        deeplab = DeeplabV3()
+        deeplab = DeeplabV3(
+            model_path = config.model_path,
+            num_classes = config.num_classes,
+            backbone = config.backbone,
+            input_shape = config.input_shape,
+            downsample_factor = config.downsample_factor,
+            cuda  = config.cuda
+        )
         print("Load model done.")
 
         print("Get predict result.")
